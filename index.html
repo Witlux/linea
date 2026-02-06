@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Banda con sensor de peso + cierre de línea</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Maqueta animada — Banda transportadora (peso, desvío y cierre de línea)</h1>
+
+    <div class="hud">
+      <div class="hud-item"><span class="k">Estado:</span> <span id="estado">ESPERAR_ENVASE</span></div>
+      <div class="hud-item"><span class="k">Motor:</span> <span id="motor">ON</span></div>
+      <div class="hud-item"><span class="k">Último peso:</span> <span id="peso">—</span></div>
+      <div class="hud-item"><span class="k">Último resultado:</span> <span id="resultado">—</span></div>
+      <div class="hud-item"><span class="k">OK:</span> <span id="okCount">0</span></div>
+      <div class="hud-item"><span class="k">Rechazo:</span> <span id="badCount">0</span></div>
+      <div class="hud-item"><span class="k">Ventana fallos:</span> <span id="ventana">0/0</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>Controles</h2>
+
+      <div class="rowBtns">
+        <button id="btnStart">Start</button>
+        <button id="btnStop">Stop</button>
+        <button id="btnReset" class="warn">Reset (si cerró línea)</button>
+        <button id="btnSpawn">Crear envase</button>
+      </div>
+
+      <div class="grid">
+        <label class="row">
+          <span>Velocidad banda</span>
+          <input id="speed" type="range" min="80" max="320" value="180" />
+        </label>
+
+        <label class="row">
+          <span>Objetivo (g)</span>
+          <input id="target" type="number" value="100" step="0.1" />
+        </label>
+
+        <label class="row">
+          <span>Tolerancia ± (g)</span>
+          <input id="tol" type="number" value="5" step="0.1" />
+        </label>
+
+        <label class="row">
+          <span>Crítico min (g)</span>
+          <input id="critMin" type="number" value="70" step="0.1" />
+        </label>
+
+        <label class="row">
+          <span>Crítico max (g)</span>
+          <input id="critMax" type="number" value="130" step="0.1" />
+        </label>
+
+        <label class="row">
+          <span>Muestras de peso</span>
+          <input id="samples" type="number" value="5" min="1" max="15" />
+        </label>
+
+        <label class="row">
+          <span>Ventana QC (N)</span>
+          <input id="windowN" type="number" value="10" min="1" max="50" />
+        </label>
+
+        <label class="row">
+          <span>Max fallos en ventana</span>
+          <input id="maxFails" type="number" value="5" min="1" max="50" />
+        </label>
+
+        <label class="row">
+          <span>Timeout salida (s)</span>
+          <input id="timeout" type="number" value="2.5" step="0.1" />
+        </label>
+      </div>
+
+      <div class="legend">
+        <div class="pill ok">OK → Línea A</div>
+        <div class="pill bad">NO OK → Línea B</div>
+        <div class="pill warn">Cierre → paro + alarma + reset</div>
+      </div>
+
+      <div class="alarmBox" id="alarmBox" aria-live="polite">
+        <div class="alarmTitle">ALARMA</div>
+        <div class="alarmText" id="alarmText">—</div>
+      </div>
+    </section>
+
+    <section class="sim">
+      <h2>Simulación</h2>
+
+      <div class="factory">
+        <div class="belt" id="belt">
+          <div class="zone z-sensor">
+            <div class="zoneDot" id="presenceDot"></div>
+            <div class="zoneLabel">Presencia</div>
+          </div>
+
+          <div class="zone z-scale">
+            <div class="zoneDot" id="scaleDot"></div>
+            <div class="zoneLabel">Báscula</div>
+          </div>
+
+          <div class="diverter" id="diverter">
+            <div class="arm"></div>
+            <div class="divLabel">Desviador</div>
+          </div>
+
+          <div class="zone z-exit">
+            <div class="zoneDot" id="exitDot"></div>
+            <div class="zoneLabel">Salida</div>
+          </div>
+        </div>
+
+        <div class="lanes">
+          <div class="lane">
+            <div class="laneTitle">Línea A (OK)</div>
+            <div class="laneTrack" id="laneA"></div>
+          </div>
+          <div class="lane">
+            <div class="laneTitle">Línea B (Rechazo)</div>
+            <div class="laneTrack" id="laneB"></div>
+          </div>
+        </div>
+
+        <div class="log">
+          <div class="logTitle">Log</div>
+          <div id="logList" class="logList"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
