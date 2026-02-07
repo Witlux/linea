@@ -85,7 +85,6 @@ function log(msg, kind = "info") {
   const cls = kind === "ok" ? "ok" : kind === "bad" ? "bad" : kind === "warn" ? "warn" : "";
   div.innerHTML = `<span class="${cls}">${msg}</span>`;
   logList.prepend(div);
-  // limitar log
   while (logList.childNodes.length > 40) logList.removeChild(logList.lastChild);
 }
 
@@ -111,7 +110,7 @@ function readConfig() {
   const max = target + tol;
 
   return {
-    speed: Number(speedEl.value),
+    speed: Number(speedEl.value), // px/s
     target,
     min,
     max,
@@ -120,7 +119,7 @@ function readConfig() {
     samples: clamp(Number(samplesEl.value), 1, 15),
     windowN: clamp(Number(windowNEl.value), 1, 50),
     maxFails: clamp(Number(maxFailsEl.value), 1, 50),
-    timeoutMs: Math.max(0.2, Number(timeoutEl.value)) * 1000,
+    timeoutMs: Math.max(0.2, Number(timeoutEl.value)) * 1000, // manual mínimo
   };
 }
 
@@ -146,9 +145,9 @@ function updateHud(pesoText = null, resultText = null) {
 }
 
 // ------------------ Modelado de envase ------------------
-// Cada envase tiene: posición, flags de eventos por zona, resultado, timers
 function spawnEnvase() {
   if (estado === Estado.LINEA_CERRADA) return;
+
   const e = {
     id: nextId++,
     x: -40,
@@ -161,8 +160,10 @@ function spawnEnvase() {
     exitSeen: false,
 
     tDivertStart: null, // para timeout salida
+    scaleAtX: null,     // ✅ NUEVO: dónde estaba cuando pesó (para timeout más exacto)
     dom: null,
   };
+
   envases.push(e);
   renderEnvase(e);
   log(`Envase <b>#${e.id}</b> creado`, "info");
@@ -191,22 +192,18 @@ function removeEnvase(e) {
 
 // ------------------ Simulación sensor de peso ------------------
 function sampleWeight(target) {
-  // 1) mayoría “normal” alrededor de target
-  // 2) a veces outliers críticos (vacío/sobrellenado)
   const r = Math.random();
   if (r < 0.06) return target - 40 + randn() * 1.8; // crítico bajo
   if (r < 0.12) return target + 40 + randn() * 1.8; // crítico alto
   if (r < 0.22) return target - 10 + randn() * 1.2; // fuera de tolerancia
   if (r < 0.32) return target + 10 + randn() * 1.2; // fuera de tolerancia
-
   return target + randn() * 1.2; // normal con ruido
 }
 
 function filteredWeight(cfg) {
   const samples = [];
   for (let i = 0; i < cfg.samples; i++) samples.push(sampleWeight(cfg.target));
-  const avg = samples.reduce((a,b)=>a+b,0) / samples.length;
-  return avg;
+  return samples.reduce((a,b)=>a+b,0) / samples.length;
 }
 
 // ------------------ Cierre de línea ------------------
@@ -220,7 +217,6 @@ function closeLine(reason) {
 }
 
 // ------------------ Desviador (pulso) ------------------
-// Industrial: default A, si rechazo -> B por X ms y vuelve a A
 let divertUntil = 0;
 const DIVERT_PULSE_MS = 260;
 
@@ -249,7 +245,7 @@ function loop(t) {
   if (nowMs() < divertUntil) diverter.classList.add("toB");
   else diverter.classList.remove("toB");
 
-  // si línea cerrada: animación en pausa pero mantenemos UI viva
+  // si motor off o línea cerrada: no mover, pero mantener UI
   if (!running) {
     requestAnimationFrame(loop);
     return;
@@ -257,11 +253,12 @@ function loop(t) {
 
   // mover envases
   const speedPx = cfg.speed; // px/s
+
   for (const e of [...envases]) {
     e.x += (speedPx * dt) / 1000;
     if (e.dom) e.dom.style.left = `${e.x}px`;
 
-    // Zona presencia (evento 1 vez)
+    // Zona presencia
     if (!e.seenPresence && e.x >= Z.sensorX) {
       e.seenPresence = true;
       setDotActive(presenceDot, true);
@@ -270,15 +267,16 @@ function loop(t) {
       setTimeout(() => setDotActive(presenceDot, false), 150);
     }
 
-    // Zona báscula (evento 1 vez)
+    // Zona báscula
     if (!e.weighed && e.x >= Z.scaleX) {
       e.weighed = true;
+      e.scaleAtX = e.x; // ✅ guardo dónde estaba al pesar
       setDotActive(scaleDot, true);
 
       const w = filteredWeight(cfg);
       e.peso = w;
 
-      // Reglas
+      // Crítico => cierre
       if (w < cfg.critMin || w > cfg.critMax) {
         updateHud(`${w.toFixed(1)} g`, "CRÍTICO");
         e.dom?.classList.add("bad");
@@ -298,14 +296,14 @@ function loop(t) {
       const fails = qcFails();
       updateHud();
 
-      // Demasiados fallos en ventana => cierre
-      if (qcWindow.length >= Math.min(cfg.windowN, qcWindow.length) && fails >= cfg.maxFails && qcWindow.length >= cfg.windowN) {
+      // Cierre por QC
+      if (qcWindow.length >= cfg.windowN && fails >= cfg.maxFails) {
         closeLine(`Demasiados rechazos: ${fails}/${cfg.windowN}. Revisar proceso/calibración.`);
         setTimeout(() => setDotActive(scaleDot, false), 150);
         break;
       }
 
-      // Desvío (pulso a B si NO OK)
+      // Desvío
       if (ok) {
         setEstado(Estado.DESVIAR_OK);
         e.dom?.classList.add("ok");
@@ -315,32 +313,47 @@ function loop(t) {
         setDiverterToBPulse();
       }
 
-      // empieza timeout salida
+      // inicia timeout salida
       e.tDivertStart = nowMs();
       setEstado(Estado.CONFIRMAR_SALIDA);
 
       setTimeout(() => setDotActive(scaleDot, false), 150);
     }
 
-    // Zona salida (evento 1 vez)
+    // Zona salida
     if (!e.exitSeen && e.x >= Z.exitX) {
       e.exitSeen = true;
       setDotActive(exitDot, true);
       setTimeout(() => setDotActive(exitDot, false), 150);
 
-      // manda a línea
       pushToLane(e.ok ? laneA : laneB, e);
       removeEnvase(e);
 
-      // si ya no hay envases, estado vuelve a esperar
       if (envases.length === 0) setEstado(Estado.ESPERAR_ENVASE);
       continue;
     }
 
-    // Timeout salida (atasco): si ya pesó y no sale
-    if (e.tDivertStart !== null && nowMs() - e.tDivertStart > cfg.timeoutMs) {
-      closeLine(`Timeout de salida (atasco) en #${e.id}. No confirmó salida en ${cfg.timeoutMs/1000}s.`);
-      break;
+    // ✅ FIX: Timeout salida dinámico (depende de ancho de banda y velocidad)
+    if (e.tDivertStart !== null) {
+      // distancia restante desde donde pesó hasta la salida real
+      const fromX = (typeof e.scaleAtX === "number") ? e.scaleAtX : Z.scaleX;
+      const dist = Math.max(0, Z.exitX - fromX);
+
+      // tiempo esperado según velocidad actual
+      const expectedMs = (dist / Math.max(1, cfg.speed)) * 1000;
+
+      // margen por rendimiento del navegador / carga / frames
+      const marginMs = 900;
+
+      // el timeout real es el mayor entre el manual y el esperado+margen
+      const timeoutRealMs = Math.max(cfg.timeoutMs, expectedMs + marginMs);
+
+      if (nowMs() - e.tDivertStart > timeoutRealMs) {
+        closeLine(
+          `Timeout de salida (atasco) en #${e.id}. Esperado ${(expectedMs/1000).toFixed(1)}s, límite ${(timeoutRealMs/1000).toFixed(1)}s.`
+        );
+        break;
+      }
     }
   }
 
@@ -386,7 +399,7 @@ function pushToLane(laneEl, e) {
 
 // ------------------ Botones ------------------
 btnStart.addEventListener("click", () => {
-  if (estado === Estado.LINEA_CERRADA) return; // no start si está cerrada
+  if (estado === Estado.LINEA_CERRADA) return;
   setMotor(true);
   showAlarm(false);
   log("Start", "info");
@@ -398,12 +411,11 @@ btnStop.addEventListener("click", () => {
 });
 
 btnReset.addEventListener("click", () => {
-  // reset sólo si estaba cerrada
   if (estado !== Estado.LINEA_CERRADA) return;
+
   motivoCierre = "";
   showAlarm(false);
 
-  // limpia todo (en real podrías elegir no borrar contadores)
   envases.forEach(e => e.dom?.remove());
   envases = [];
   qcWindow = [];
